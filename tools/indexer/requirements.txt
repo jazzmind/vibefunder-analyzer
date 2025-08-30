@@ -1,0 +1,5 @@
+tree-sitter==0.21.3
+tree-sitter-languages==1.10.2
+faiss-cpu==1.8.0.post1
+numpy==1.26.4
+tiktoken==0.7.0

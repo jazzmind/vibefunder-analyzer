@@ -7,11 +7,15 @@ RUN apt-get update \
      ca-certificates curl git bash tar python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
-# Install security and scanning CLIs
-RUN curl -sSL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | bash -s -- -b /usr/local/bin \
-  && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin \
-  && curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin \
-  && curl -sSfL https://semgrep.dev/install.sh | sh -s -- -b /usr/local/bin
+# Ensure bash with pipefail for reliable curl | sh
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Install security and scanning CLIs (fail on HTTP errors)
+RUN set -eux; \
+  curl -fsSL https://raw.githubusercontent.com/gitleaks/gitleaks/main/install.sh | bash -s -- -b /usr/local/bin; \
+  curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin; \
+  curl -fsSL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin; \
+  curl -fsSL https://semgrep.dev/install.sh | sh -s -- -b /usr/local/bin
 
 WORKDIR /app
 

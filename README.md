@@ -55,7 +55,7 @@ Use returned `access_token` as `Authorization: Bearer ...` for `/api/v1/*` endpo
 
 ### Provision client credentials
 
-Generate a `client_id` and `client_secret` and print the analyzer and vibefunder env snippets:
+Generate a `client_id`, `client_secret`, and a strong `OAUTH_SIGNING_KEY`, then print analyzer and vibefunder env snippets:
 ```bash
 make gen-client
 # or

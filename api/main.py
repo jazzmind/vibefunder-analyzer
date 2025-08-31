@@ -46,6 +46,8 @@ class Job:
 
 JOBS: Dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+# In-memory last artifacts by repo URL (non-persistent)
+REPO_LAST: Dict[str, Dict[str, object]] = {}
 
 app = FastAPI(title="Analyzer API", version="0.1.0")
 
@@ -140,6 +142,22 @@ def _run_job(job: Job) -> None:
             job.steps[-1].finished_at = datetime.utcnow().isoformat() + "Z"
     finally:
         job.finished_at = datetime.utcnow()
+        # Update repo history record
+        try:
+            reports_present: List[str] = []
+            if job.reports_dir.exists():
+                for p in job.reports_dir.glob("*"):
+                    if p.is_file():
+                        reports_present.append(p.name)
+            REPO_LAST[job.req.repo_url] = {
+                "job_id": job.id,
+                "status": job.status.value,
+                "when": datetime.utcnow().isoformat() + "Z",
+                "reports_present": reports_present,
+                "scanners_selected": [s.value for s in job.req.scanners],
+            }
+        except Exception:
+            pass
 
 
 @app.post("/oauth/token")
@@ -229,6 +247,34 @@ def capabilities() -> Dict[str, object]:
         {"name": "sbom", "available": bool(avail.get("syft")) and bool(avail.get("grype"))},
     ]
     return {"scanners": scanners, "tools": avail}
+
+
+@app.get("/api/v1/jobs/{job_id}/reports/{name}", dependencies=[Depends(require_auth)])
+def get_report(job_id: str, name: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    path = job.reports_dir / name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="report not found")
+    try:
+        return {"name": name, "content": path.read_text(encoding="utf-8")}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/v1/plan", dependencies=[Depends(require_auth)])
+def plan(req: AnalyzeRequest) -> Dict[str, object]:
+    # Do not clone; return installed scanners and any last-known artifacts for this repo
+    avail = tools_available()
+    scanners = [
+        {"name": "semgrep", "available": bool(avail.get("semgrep"))},
+        {"name": "gitleaks", "available": bool(avail.get("gitleaks"))},
+        {"name": "sbom", "available": bool(avail.get("syft")) and bool(avail.get("grype"))},
+    ]
+    history = REPO_LAST.get(req.repo_url, None)
+    return {"scanners": scanners, "history": history}
 
 
 if __name__ == "__main__":  # pragma: no cover

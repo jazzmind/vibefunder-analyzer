@@ -1,0 +1,17 @@
+.git
+.gitignore
+node_modules
+dist
+build
+.venv
+__pycache__
+*.pyc
+reports
+out
+data
+jobs
+sbom.json
+coverage
+*.log
+
+

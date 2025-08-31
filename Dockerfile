@@ -20,8 +20,9 @@ RUN set -eux; \
   esac; \
   # gitleaks
   GL_TAG="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name)"; \
-  GL_VER="${GL_TAG#v}"; \
-  curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/${GL_TAG}/gitleaks_${GL_VER}_linux_${GOARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
+  if [ "$GOARCH" = "amd64" ]; then PATT='linux_(amd64|x64|x86_64)'; else PATT='linux_arm64'; fi; \
+  GL_ASSET="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r ".assets[].browser_download_url | select(test(\"(${PATT}).*\\\\.tar\\\\.gz$\"))" | head -n1)"; \
+  curl -fsSL "$GL_ASSET" -o /tmp/gitleaks.tgz; \
   tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks; \
   chmod +x /usr/local/bin/gitleaks; \
   # syft

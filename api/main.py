@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Form
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Form, Depends
 
 from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse
 from .cli_wrappers import (

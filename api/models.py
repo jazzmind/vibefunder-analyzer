@@ -47,6 +47,14 @@ class AnalyzeStartResponse(BaseModel):
     status: JobStatus
 
 
+class JobStep(BaseModel):
+    name: str
+    status: str  # pending|running|succeeded|failed|skipped
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    message: Optional[str] = None
+
+
 class JobStatusResponse(BaseModel):
     job_id: str
     status: JobStatus
@@ -56,6 +64,10 @@ class JobStatusResponse(BaseModel):
     created_at: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
+    steps: List[JobStep] = []
+    canceled: bool = False
+    scanners_selected: List[ScannerName] = []
+    reports_present: List[str] = []  # filenames present in reports_dir
 
 
 class SowResponse(BaseModel):

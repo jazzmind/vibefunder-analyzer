@@ -5,11 +5,11 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Form, Depends
 
-from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse
+from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse, JobStep, ScannerName
 from .cli_wrappers import (
     REPO_ROOT,
     clone_repo,
@@ -40,6 +40,8 @@ class Job:
         self.index_dir: Path = self.job_dir / "data" / "index"
         self.out_dir: Path = self.job_dir / "out"
         self.sow_path: Path = self.out_dir / "sow.md"
+        self.steps: List[JobStep] = []
+        self.canceled: bool = False
 
 
 JOBS: Dict[str, Job] = {}
@@ -72,30 +74,70 @@ def _run_job(job: Job) -> None:
 
         timeout = job.req.timeout_seconds
 
+        # Helper to manage steps
+        def start_step(name: str, msg: Optional[str] = None) -> None:
+            step = JobStep(name=name, status="running", started_at=datetime.utcnow().isoformat() + "Z", message=msg)
+            job.steps.append(step)
+
+        def finish_step(status: str = "succeeded", msg: Optional[str] = None) -> None:
+            if not job.steps:
+                return
+            step = job.steps[-1]
+            step.status = status
+            step.finished_at = datetime.utcnow().isoformat() + "Z"
+            if msg:
+                step.message = msg
+
+        def check_cancel() -> None:
+            if job.canceled:
+                raise RuntimeError("job canceled")
+
         # 1) Clone repo
+        start_step("clone", f"branch={job.req.branch or 'default'}")
         clone_repo(job.req.repo_url, dest_dir=job.repo_dir, github_token=job.req.github_token, branch=job.req.branch, timeout=timeout)
+        finish_step("succeeded")
+        check_cancel()
 
         # 2) Run scanners according to selection
         config_path = REPO_ROOT / job.req.semgrep_config_path
 
-        if "semgrep" in [s.value for s in job.req.scanners]:
+        selected = [s.value for s in job.req.scanners]
+        if "semgrep" in selected:
+            start_step("semgrep")
             run_semgrep(repo_dir=job.repo_dir, reports_dir=job.reports_dir, config_path=config_path, timeout=timeout)
-        if "gitleaks" in [s.value for s in job.req.scanners]:
+            finish_step("succeeded")
+            check_cancel()
+        if "gitleaks" in selected:
+            start_step("gitleaks")
             run_gitleaks(repo_dir=job.repo_dir, reports_dir=job.reports_dir, timeout=timeout)
-        if "sbom" in [s.value for s in job.req.scanners]:
+            finish_step("succeeded")
+            check_cancel()
+        if "sbom" in selected:
+            start_step("sbom")
             run_syft_grype(repo_dir=job.repo_dir, reports_dir=job.reports_dir, timeout=timeout)
+            finish_step("succeeded")
+            check_cancel()
 
         # 3) Build index and generate SoW
+        start_step("index")
         run_indexer(repo_dir=job.repo_dir, index_out_dir=job.index_dir, timeout=timeout)
+        finish_step("succeeded")
+        check_cancel()
+        start_step("sow")
         job.sow_path.parent.mkdir(parents=True, exist_ok=True)
         from .cli_wrappers import run_sow
 
         run_sow(index_dir=job.index_dir, reports_dir=job.reports_dir, out_file=job.sow_path, timeout=timeout)
+        finish_step("succeeded")
 
         job.status = JobStatus.succeeded
     except Exception as exc:  # pragma: no cover
         job.status = JobStatus.failed
         job.message = str(exc)
+        # Mark current step as failed if running
+        if job.steps and job.steps[-1].status == "running":
+            job.steps[-1].status = "failed"
+            job.steps[-1].finished_at = datetime.utcnow().isoformat() + "Z"
     finally:
         job.finished_at = datetime.utcnow()
 
@@ -132,6 +174,14 @@ def job_status(job_id: str) -> JobStatusResponse:
         job = JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
+    reports_present: List[str] = []
+    try:
+        if job.reports_dir.exists():
+            for p in job.reports_dir.glob("*"):
+                if p.is_file():
+                    reports_present.append(p.name)
+    except Exception:
+        pass
     return JobStatusResponse(
         job_id=job.id,
         status=job.status,
@@ -141,6 +191,10 @@ def job_status(job_id: str) -> JobStatusResponse:
         created_at=job.created_at.isoformat() + "Z" if job.created_at else None,
         started_at=job.started_at.isoformat() + "Z" if job.started_at else None,
         finished_at=job.finished_at.isoformat() + "Z" if job.finished_at else None,
+        steps=job.steps,
+        canceled=job.canceled,
+        scanners_selected=[ScannerName(s) for s in [s.value for s in job.req.scanners]],
+        reports_present=reports_present,
     )
 
 
@@ -154,6 +208,27 @@ def get_sow(job_id: str) -> SowResponse:
         raise HTTPException(status_code=404, detail="sow not available for this job")
     content = job.sow_path.read_text(encoding="utf-8")
     return SowResponse(job_id=job_id, sow_markdown=content)
+
+
+@app.post("/api/v1/jobs/{job_id}/cancel", dependencies=[Depends(require_auth)])
+def cancel_job(job_id: str) -> Dict[str, str]:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    job.canceled = True
+    return {"status": "cancellation_requested"}
+
+
+@app.get("/api/v1/capabilities")
+def capabilities() -> Dict[str, object]:
+    avail = tools_available()
+    scanners = [
+        {"name": "semgrep", "available": bool(avail.get("semgrep"))},
+        {"name": "gitleaks", "available": bool(avail.get("gitleaks"))},
+        {"name": "sbom", "available": bool(avail.get("syft")) and bool(avail.get("grype"))},
+    ]
+    return {"scanners": scanners, "tools": avail}
 
 
 if __name__ == "__main__":  # pragma: no cover

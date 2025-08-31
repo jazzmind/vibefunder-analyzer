@@ -6,5 +6,6 @@ PyJWT>=2.9.0
 python-dotenv>=1.0.1
 python-multipart>=0.0.9
 # CLI wrappers rely on external binaries: semgrep, gitleaks, syft, grype (installed in Docker image)
+beautifulsoup4>=4.12.3
 
 

@@ -75,3 +75,31 @@ class SowResponse(BaseModel):
     sow_markdown: str
 
 
+class FeatureSpec(BaseModel):
+    name: str
+    keywords: List[str] = []
+    file_globs: List[str] = []
+    robust_signals: List[str] = []
+
+
+class FeatureScanRequest(BaseModel):
+    repo_url: str
+    github_token: Optional[str] = None
+    branch: Optional[str] = None
+    features: List[FeatureSpec]
+    timeout_seconds: int = 600
+
+
+class FeatureScanFinding(BaseModel):
+    feature: str
+    present: bool
+    keyword_hits: int
+    files_matched: int
+    robust_signals_hits: int
+    notes: Optional[str] = None
+
+
+class FeatureScanResponse(BaseModel):
+    repo_url: str
+    results: List[FeatureScanFinding]
+

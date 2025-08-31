@@ -9,7 +9,7 @@ from typing import Dict, Optional, List
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Form, Depends
 
-from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse, JobStep, ScannerName
+from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse, JobStep, ScannerName, FeatureScanRequest, FeatureScanResponse, FeatureScanFinding
 from .cli_wrappers import (
     REPO_ROOT,
     clone_repo,
@@ -20,6 +20,9 @@ from .cli_wrappers import (
     tools_available,
 )
 from .auth import require_auth, issue_token, authenticate_client
+from bs4 import BeautifulSoup  # type: ignore
+import shutil
+import fnmatch
 
 
 WORK_ROOT = Path((Path.cwd() / "jobs").resolve())
@@ -275,6 +278,134 @@ def plan(req: AnalyzeRequest) -> Dict[str, object]:
     ]
     history = REPO_LAST.get(req.repo_url, None)
     return {"scanners": scanners, "history": history}
+
+
+@app.post("/api/v1/aggregate", dependencies=[Depends(require_auth)])
+def aggregate(req: AnalyzeRequest) -> Dict[str, object]:
+    # Clone repo shallow, collect README and *.md files (size-limited), and fetch website if provided via branch field hack
+    # We reuse AnalyzeRequest; use branch for optional website URL if supplied as "site:<url>" (keeps client simple). Alternatively add dedicated model later.
+    job_id = uuid.uuid4().hex
+    job_dir = WORK_ROOT / ("agg-" + job_id)
+    repo_dir = job_dir / "repo"
+    try:
+        clone_repo(req.repo_url, dest_dir=repo_dir, github_token=req.github_token, branch=req.branch, timeout=min(req.timeout_seconds, 300))
+    except Exception as exc:
+        # Allow aggregate to proceed without repo if clone fails
+        repo_dir = None  # type: ignore
+        repo_error = str(exc)
+    else:
+        repo_error = None
+
+    md_texts: List[Dict[str, str]] = []
+    readme_text: Optional[str] = None
+    if repo_dir and repo_dir.exists():
+        total_bytes = 0
+        for p in repo_dir.rglob("*.md"):
+            try:
+                if p.stat().st_size > 200_000:
+                    continue
+                txt = p.read_text(encoding="utf-8", errors="ignore")
+                total_bytes += len(txt.encode("utf-8"))
+                if total_bytes > 1_000_000:
+                    break
+                md_texts.append({"path": str(p.relative_to(repo_dir)), "text": txt})
+                if p.name.lower().startswith("readme") and readme_text is None:
+                    readme_text = txt
+            except Exception:
+                continue
+
+    website_text: Optional[str] = None
+    # Optional: overload semgrep_config_path to carry website URL (until separate model is added)
+    site_url = None
+    if req.semgrep_config_path and req.semgrep_config_path.startswith("http"):
+        site_url = req.semgrep_config_path
+    if site_url:
+        try:
+            import requests  # local import
+            resp = requests.get(site_url, timeout=15)
+            if resp.ok:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                website_text = soup.get_text(separator=" ", strip=True)
+        except Exception:
+            website_text = None
+
+    # Cleanup clone dir to save space
+    try:
+        if job_dir.exists():
+            shutil.rmtree(job_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return {
+        "repo_url": req.repo_url,
+        "readme": readme_text,
+        "md_files": md_texts,
+        "website_text": website_text,
+        "repo_error": repo_error,
+    }
+
+
+@app.post("/api/v1/features", response_model=FeatureScanResponse, dependencies=[Depends(require_auth)])
+def feature_scan(req: FeatureScanRequest) -> FeatureScanResponse:
+    # Clone shallow and scan
+    job_id = uuid.uuid4().hex
+    job_dir = WORK_ROOT / ("feat-" + job_id)
+    repo_dir = job_dir / "repo"
+    try:
+        clone_repo(req.repo_url, dest_dir=repo_dir, github_token=req.github_token, branch=req.branch, timeout=min(req.timeout_seconds, 300))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"clone_failed: {exc}")
+
+    code_exts = {".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".rb", ".rs"}
+    files: List[Path] = []
+    for p in repo_dir.rglob("*"):
+        if p.is_file() and p.suffix.lower() in code_exts:
+            files.append(p)
+
+    results: List[FeatureScanFinding] = []
+    for spec in req.features:
+        keyword_hits = 0
+        robust_hits = 0
+        files_matched = 0
+        patterns = [kw.lower() for kw in (spec.keywords or [])]
+        robust_patterns = [kw.lower() for kw in (spec.robust_signals or [])]
+        for f in files:
+            try:
+                txt = f.read_text(encoding="utf-8", errors="ignore").lower()
+            except Exception:
+                continue
+            if any(p in txt for p in patterns):
+                files_matched += 1
+                for p in patterns:
+                    keyword_hits += txt.count(p)
+            for rp in robust_patterns:
+                robust_hits += txt.count(rp)
+        # file_globs
+        for g in (spec.file_globs or []):
+            for f in files:
+                if fnmatch.fnmatch(str(f.relative_to(repo_dir)), g):
+                    files_matched += 1
+        present = (keyword_hits > 0) or (files_matched > 0)
+        notes = None
+        if robust_hits > 0:
+            notes = f"robust_signals_hits={robust_hits}"
+        results.append(FeatureScanFinding(
+            feature=spec.name,
+            present=present,
+            keyword_hits=keyword_hits,
+            files_matched=files_matched,
+            robust_signals_hits=robust_hits,
+            notes=notes,
+        ))
+
+    # Cleanup
+    try:
+        if job_dir.exists():
+            shutil.rmtree(job_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return FeatureScanResponse(repo_url=req.repo_url, results=results)
 
 
 if __name__ == "__main__":  # pragma: no cover

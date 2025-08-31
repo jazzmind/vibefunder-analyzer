@@ -6,6 +6,7 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Dict, Optional
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,7 +111,8 @@ def run_syft_grype(repo_dir: Path, reports_dir: Path, timeout: Optional[int] = N
 def run_indexer(repo_dir: Path, index_out_dir: Path, timeout: Optional[int] = None) -> Path:
     index_out_dir.mkdir(parents=True, exist_ok=True)
     script = REPO_ROOT / "tools" / "indexer" / "index_repo.py"
-    cmd = ["python", str(script), "--repo", str(repo_dir), "--out", str(index_out_dir)]
+    py = sys.executable or "python3"
+    cmd = [py, str(script), "--repo", str(repo_dir), "--out", str(index_out_dir)]
     _run(cmd, timeout=timeout, cwd=REPO_ROOT)
     return index_out_dir
 
@@ -118,8 +120,9 @@ def run_indexer(repo_dir: Path, index_out_dir: Path, timeout: Optional[int] = No
 def run_sow(index_dir: Path, reports_dir: Path, out_file: Path, timeout: Optional[int] = None) -> Path:
     out_file.parent.mkdir(parents=True, exist_ok=True)
     script = REPO_ROOT / "agents" / "security_agent.py"
+    py = sys.executable or "python3"
     cmd = [
-        "python",
+        py,
         str(script),
         "--index", str(index_dir),
         "--reports", str(reports_dir),

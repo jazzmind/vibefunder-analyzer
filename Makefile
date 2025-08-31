@@ -1,4 +1,4 @@
-.PHONY: scans sow up down api-run api-build api-docker-run tools
+.PHONY: scans sow up down api-run api-build api-docker-run tools gen-client
 
 scans:
 	bash scripts/run_local_scans.sh
@@ -24,3 +24,6 @@ api-docker-run:
 
 tools:
 	python tools/indexer/index_repo.py --repo . --out data/index
+
+gen-client:
+	python scripts/generate_client_credentials.py

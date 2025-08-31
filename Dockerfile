@@ -4,14 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     ca-certificates curl git python3 python3-pip python3-venv \
+     ca-certificates curl git bash tar python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
 # Install security and scanning CLIs
 RUN curl -sSL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | bash -s -- -b /usr/local/bin \
   && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin \
   && curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin \
-  && curl -sSfL https://semgrep.dev/api/releases/semgrep-latest.tgz | tar -xz -C /usr/local/bin --strip-components=1 semgrep/semgrep
+  && curl -sSfL https://semgrep.dev/install.sh | sh -s -- -b /usr/local/bin
 
 WORKDIR /app
 

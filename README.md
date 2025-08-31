@@ -14,6 +14,7 @@ The API clones a target repo (optionally using a GitHub token), runs selected sc
 Endpoints:
 - `GET /health` – service status
 - `GET /tools` – report installed CLI tools
+- `POST /oauth/token` – OAuth2 client credentials token endpoint
 - `POST /api/v1/analyze` – start an analysis job
   - body: `{ repo_url, github_token?, branch?, scanners?, semgrep_config_path?, timeout_seconds? }`
 - `GET /api/v1/jobs/{job_id}` – job status and artifact paths
@@ -32,6 +33,44 @@ curl -s -X POST http://localhost:8080/api/v1/analyze \
       }'
 ```
 
+## Auth (server-to-server)
+
+This service issues and validates JWT bearer tokens for server-to-server access via the OAuth2 client credentials grant.
+
+Environment variables:
+- `OAUTH_SIGNING_KEY` – HMAC key to sign/verify access tokens (required for prod)
+- `OAUTH_CLIENTS` – JSON map of client_id to client_secret, e.g. `{ "svc": "secret" }`
+- `OAUTH_ISSUER` – token issuer string (default `vibefunder-analyzer`)
+- `OAUTH_AUDIENCE` – token audience string (default `analyzer-api`)
+- `OAUTH_TOKEN_TTL_SECONDS` – token lifetime (default `3600`)
+
+Token request:
+```bash
+curl -s -X POST http://localhost:8080/oauth/token \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  -d 'grant_type=client_credentials&client_id=local-client&client_secret=local-secret&scope=analyze:write'
+```
+
+Use returned `access_token` as `Authorization: Bearer ...` for `/api/v1/*` endpoints.
+
+### Provision client credentials
+
+Generate a `client_id` and `client_secret` and print the analyzer and vibefunder env snippets:
+```bash
+make gen-client
+# or
+python scripts/generate_client_credentials.py
+```
+
+Then on the analyzer service:
+- Add/merge the printed JSON into `OAUTH_CLIENTS` (map of client_id → client_secret)
+- Ensure `OAUTH_SIGNING_KEY` is set to a strong random value
+- Redeploy/restart the analyzer service
+
+On the vibefunder app:
+- Set `ANALYZER_CLIENT_ID` and `ANALYZER_CLIENT_SECRET` from the output
+- Set `ANALYZER_BASE_URL` to the analyzer service URL
+
 ## Local Development
 
 ```bash
@@ -41,6 +80,12 @@ pip install -r tools/indexer/requirements.txt -r agents/requirements.txt
 
 # Run API
 make api-run  # uvicorn on :8080
+
+# Auth env & scripts
+cp scripts/local.env.example .env  # customize secrets and repo settings
+source .env
+bash scripts/get_token.sh          # prints access token
+bash scripts/run_analysis.sh       # uses .env and bearer token to start a job
 
 # Optional: run local scans against this repo
 make scans

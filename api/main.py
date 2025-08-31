@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Form
 
 from .models import AnalyzeRequest, AnalyzeStartResponse, JobStatus, JobStatusResponse, SowResponse
 from .cli_wrappers import (
@@ -19,6 +19,7 @@ from .cli_wrappers import (
     run_syft_grype,
     tools_available,
 )
+from .auth import require_auth, issue_token, authenticate_client
 
 
 WORK_ROOT = Path((Path.cwd() / "jobs").resolve())
@@ -99,7 +100,21 @@ def _run_job(job: Job) -> None:
         job.finished_at = datetime.utcnow()
 
 
-@app.post("/api/v1/analyze", response_model=AnalyzeStartResponse)
+@app.post("/oauth/token")
+async def oauth_token(
+    grant_type: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
+    scope: str = Form(default="analyze:write"),
+):
+    if grant_type != "client_credentials":
+        raise HTTPException(status_code=400, detail="unsupported_grant_type")
+    if not authenticate_client(client_id, client_secret):
+        raise HTTPException(status_code=401, detail="invalid_client")
+    return issue_token(client_id, scope)
+
+
+@app.post("/api/v1/analyze", response_model=AnalyzeStartResponse, dependencies=[Depends(require_auth)])
 async def start_analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks) -> AnalyzeStartResponse:
     _validate_request(req)
     job_id = uuid.uuid4().hex
@@ -111,7 +126,7 @@ async def start_analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks) 
     return AnalyzeStartResponse(job_id=job_id, status=job.status)
 
 
-@app.get("/api/v1/jobs/{job_id}", response_model=JobStatusResponse)
+@app.get("/api/v1/jobs/{job_id}", response_model=JobStatusResponse, dependencies=[Depends(require_auth)])
 def job_status(job_id: str) -> JobStatusResponse:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -129,7 +144,7 @@ def job_status(job_id: str) -> JobStatusResponse:
     )
 
 
-@app.get("/api/v1/jobs/{job_id}/sow", response_model=SowResponse)
+@app.get("/api/v1/jobs/{job_id}/sow", response_model=SowResponse, dependencies=[Depends(require_auth)])
 def get_sow(job_id: str) -> SowResponse:
     with JOBS_LOCK:
         job = JOBS.get(job_id)

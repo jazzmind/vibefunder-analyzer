@@ -7,6 +7,10 @@ A pragmatic starter to evaluate a codebase and site for production readiness, no
 - **Observability**: OpenTelemetry sample app + Collector, Jaeger, Prometheus, Grafana via `docker-compose`.
 - **LLM Assist**: Offline-first indexer and an agent that drafts a SoW from scanner outputs.
 
+## Hackathon Pitch & Demo
+
+For the hackathon context, what we built, why it matters, and a step-by-step demo script, see `HACKATHON.md`.
+
 ## API Overview
 
 The API clones a target repo (optionally using a GitHub token), runs selected scanners, builds a source index, and generates a draft SoW.

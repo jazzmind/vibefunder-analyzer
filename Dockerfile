@@ -10,12 +10,30 @@ RUN apt-get update \
 # Ensure bash with pipefail for reliable curl | sh
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install security and scanning CLIs (fail on HTTP errors)
+# Install security and scanning CLIs from release artifacts (fails on HTTP errors)
 RUN set -eux; \
-  curl -fsSL https://raw.githubusercontent.com/gitleaks/gitleaks/main/install.sh | bash -s -- -b /usr/local/bin; \
-  curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin; \
-  curl -fsSL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin; \
-  curl -fsSL https://semgrep.dev/install.sh | sh -s -- -b /usr/local/bin
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) GL_ARCH="x86_64"; A_ARCH="x86_64"; R2C_ARCH="amd64";; \
+    arm64) GL_ARCH="arm64";  A_ARCH="arm64";  R2C_ARCH="arm64";; \
+    *) echo "unsupported architecture: $arch"; exit 1;; \
+  esac; \
+  # gitleaks
+  curl -fsSL "https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_Linux_${GL_ARCH}.tar.gz" -o /tmp/gitleaks.tgz; \
+  tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks; \
+  chmod +x /usr/local/bin/gitleaks; \
+  # syft
+  curl -fsSL "https://github.com/anchore/syft/releases/latest/download/syft_Linux_${A_ARCH}.tar.gz" -o /tmp/syft.tgz; \
+  tar -xzf /tmp/syft.tgz -C /usr/local/bin syft; \
+  chmod +x /usr/local/bin/syft; \
+  # grype
+  curl -fsSL "https://github.com/anchore/grype/releases/latest/download/grype_Linux_${A_ARCH}.tar.gz" -o /tmp/grype.tgz; \
+  tar -xzf /tmp/grype.tgz -C /usr/local/bin grype; \
+  chmod +x /usr/local/bin/grype; \
+  # semgrep
+  curl -fsSL "https://github.com/returntocorp/semgrep/releases/latest/download/semgrep-linux-${R2C_ARCH}" -o /usr/local/bin/semgrep; \
+  chmod +x /usr/local/bin/semgrep; \
+  rm -f /tmp/*.tgz
 
 WORKDIR /app
 

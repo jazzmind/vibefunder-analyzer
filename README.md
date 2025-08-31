@@ -104,7 +104,7 @@ make api-docker-run
 ```
 
 Environment variables:
-- `ASVS_LEVEL` – influences SoW acceptance language (default `L1`).
+- `ASVS_LEVEL` – influences SoW acceptance language (default `L1`). 
 
 Deploy to Koyeb:
 - Use the provided `Dockerfile` as the service image.
@@ -126,3 +126,71 @@ make scans
 python tools/indexer/index_repo.py --repo . --out data/index
 python agents/security_agent.py --index data/index --reports reports --out out/sow.md
 ```
+
+## Detailed API Reference
+
+### Endpoints
+
+- `GET /health`
+  - Returns service status and version.
+- `GET /tools`
+  - Returns availability of required CLIs. Useful for troubleshooting missing scanners.
+- `POST /oauth/token`
+  - OAuth2 client credentials grant. Returns a bearer token signed with HS256.
+  - Form fields: `grant_type=client_credentials`, `client_id`, `client_secret`, optional `scope` (default `analyze:write`).
+- `POST /api/v1/analyze`
+  - Starts an analysis job. Requires `Authorization: Bearer <token>`.
+  - JSON body:
+    - `repo_url` (string, required)
+    - `github_token` (string, optional)
+    - `branch` (string, optional)
+    - `scanners` (array of strings: `semgrep`, `gitleaks`, `sbom`)
+    - `semgrep_config_path` (string, default `configs/semgrep.yml`)
+    - `timeout_seconds` (int, 60–7200, default 900)
+- `GET /api/v1/jobs/{job_id}`
+  - Returns job status and artifact paths. Requires bearer token.
+- `GET /api/v1/jobs/{job_id}/sow`
+  - Returns SoW markdown for a finished job. Requires bearer token.
+
+### Example: Issue a token and start a job
+
+```bash
+export HOST=http://localhost:8080
+TOKEN=$(curl -s -X POST "$HOST/oauth/token" \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  -d 'grant_type=client_credentials&client_id=local-client&client_secret=local-secret&scope=analyze:write' | jq -r .access_token)
+
+curl -s -X POST "$HOST/api/v1/analyze" \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "repo_url": "https://github.com/org/repo",
+        "github_token": "ghp_***",
+        "branch": "main",
+        "scanners": ["semgrep", "gitleaks", "sbom"]
+      }'
+```
+
+### Example: Poll job and fetch SoW
+
+```bash
+JOB_ID=abc123                          # replace with returned job_id
+curl -s -H "authorization: Bearer $TOKEN" "$HOST/api/v1/jobs/$JOB_ID" | jq .
+curl -s -H "authorization: Bearer $TOKEN" "$HOST/api/v1/jobs/$JOB_ID/sow" | jq -r .sow_markdown
+```
+
+## Configuration Reference
+
+- `OAUTH_SIGNING_KEY` (required in non-local): HS256 signing key for tokens
+- `OAUTH_CLIENTS`: JSON map of `client_id` → `client_secret` for trusted callers
+- `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, `OAUTH_TOKEN_TTL_SECONDS`: token metadata
+- `ASVS_LEVEL`: influences SoW acceptance language (default `L1`)
+
+To generate safe values and snippets for both services, run:
+
+```bash
+make gen-client
+```
+
+This prints analyzer env values (`OAUTH_CLIENTS`, `OAUTH_SIGNING_KEY`) and vibefunder values (`ANALYZER_CLIENT_ID`, `ANALYZER_CLIENT_SECRET`).
+

@@ -1,3 +1,7 @@
+# Analyzer API container image
+# - Base: Ubuntu 22.04
+# - Installs security scanners (gitleaks, semgrep), SBOM/vuln tools (syft, grype)
+# - Installs Python runtime and dependencies for FastAPI service and tools
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,20 +22,20 @@ RUN set -eux; \
     arm64) GOARCH="arm64"; R2C_ARCH="aarch64";; \
     *) echo "unsupported architecture: $arch"; exit 1;; \
   esac; \
-  # gitleaks
+  # gitleaks (secrets scanning)
   GL_TAG="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name)"; \
   if [ "$GOARCH" = "amd64" ]; then PATT='linux_(amd64|x64|x86_64)'; else PATT='linux_arm64'; fi; \
   GL_ASSET="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r ".assets[].browser_download_url | select(test(\"(${PATT}).*\\\\.tar\\\\.gz$\"))" | head -n1)"; \
   curl -fsSL "$GL_ASSET" -o /tmp/gitleaks.tgz; \
   tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks; \
   chmod +x /usr/local/bin/gitleaks; \
-  # syft
+  # syft (SBOM generation)
   SYFT_TAG="$(curl -fsSL https://api.github.com/repos/anchore/syft/releases/latest | jq -r .tag_name)"; \
   SYFT_VER="${SYFT_TAG#v}"; \
   curl -fsSL "https://github.com/anchore/syft/releases/download/${SYFT_TAG}/syft_${SYFT_VER}_linux_${GOARCH}.tar.gz" -o /tmp/syft.tgz; \
   tar -xzf /tmp/syft.tgz -C /usr/local/bin syft; \
   chmod +x /usr/local/bin/syft; \
-  # grype
+  # grype (SBOM vulnerability scanning)
   GRYPE_TAG="$(curl -fsSL https://api.github.com/repos/anchore/grype/releases/latest | jq -r .tag_name)"; \
   GRYPE_VER="${GRYPE_TAG#v}"; \
   curl -fsSL "https://github.com/anchore/grype/releases/download/${GRYPE_TAG}/grype_${GRYPE_VER}_linux_${GOARCH}.tar.gz" -o /tmp/grype.tgz; \
@@ -58,6 +62,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt \
 
 COPY . .
 
+# FastAPI (uvicorn) listens on 8080 inside the container
 EXPOSE 8080
 
 ENV PYTHONUNBUFFERED=1
